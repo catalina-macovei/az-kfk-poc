@@ -82,8 +82,135 @@ Check function invocation from Azure portal, by navigating to ```function resour
 Catalina Macovei
 
 
+# Apache Kafka setup
+In this section there is a short demo on how to setup a resource of Apache Kafka Server on on Ubuntu 24.04 in Azure.
+You can find in Azure Marketplace this resource:
+![apache kafka](imgs/image7.png)
 
+After selecting `create button` you will be redirected to a normal VM setup portal which implicitly has the image of Apache Kafka on Ubuntu preselected.
+![create vm](img/image8.png)
 
-    
+### Configurations:
+Since this VM is for learning purpose and it doesn't involve a real scenario, I left as default the networking setup. Also Size setup is set to the lowest possible parameter in order to save on budget.
+  1. Computer name: dico-vm-kafka
+  2. Operating system: Linux (ubuntu 24.04)
+  3. VM generation: V1
+  4. VM architecture: x64
+  5. Size: Standard A1 v2
+  6. vCPUs: 1
+  7. RAM: 2 GiB
+  8. Public IP address: 20.52.20.54 (Network interface: default)
+  9. Private IP address: 10.0.0.4
+  10. Virtual network/subnet: dico-vm-kafka-vnet/default
 
-# az-kafka-proj
+## Start the Kafka Environment
+I prefer working from my local terminal so I have to loggin via SSH on the cloud VM. 
+Once you deployed the VM you will get a pop-up with download key. This key will help us loggin via ssh. 
+
+1. Login
+  ```ssh -i <path/your_key.pem> azureuser@<your_public_ip>```
+2. Once logged in, change your current path to the Kafka installation directory:
+  ```cd /opt/kafka/```
+3. You can use ths tutorial to see how to start zookeeper and kafka server on localhost. 
+  [tutorial link](https://cloudinfrastructureservices.co.uk/how-to-setup-apache-kafka-server-on-azure-aws-gcp/)
+4. In order to send messages from our azure functions I will configure the VM to listen to a public IP, not localhost. Because this is not a real scenario, I do not set up usernames and passwords, just ```PLAINTEXT```.  
+
+To do this, let's update ```server.properties```:
+Run: `sudo nano config/server.properties`
+
+Paste following properties in `Socket Server Settings` section:
+```
+listeners=PLAINTEXT://0.0.0.0:9092
+advertised.listeners=PLAINTEXT://20.52.20.54:9092
+```
+
+This is how it looks in my properties:
+```
+############################# Socket Server Settings #############################
+
+# The address the socket server listens on. If not configured, the host name will be equal to the value of
+# java.net.InetAddress.getCanonicalHostName(), with PLAINTEXT listener name, and port 9092.
+#   FORMAT:
+#     listeners = listener_name://host_name:port
+#   EXAMPLE:
+#     listeners = PLAINTEXT://your.host.name:9092
+listeners=PLAINTEXT://0.0.0.0:9092
+
+# Listener name, hostname and port the broker will advertise to clients.
+# If not set, it uses the value for "listeners".
+advertised.listeners=PLAINTEXT://20.52.20.54:9092
+```
+
+Afterwards, restart the server and create a topic:
+```
+ bin/kafka-topics.sh --create --topic test-topic --bootstrap-server 20.52.20.54:9092 --partitions 1 --replication-factor 1
+```
+
+Now you can use the producer to send messages to `test-topic` and the consumer to read them
+
+## Create an azure function 
+Follow the previous section steps to create an azure function. The configs remain the same but function app this time is an `http trigger`.
+It will be tested locally first using this `local.settings.json`
+```
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "KafkaBroker": "20.52.20.54:9092"
+  }
+}
+```
+Here in the Kafka broker field is the IP and port we configured earlier our server to listen to. So make sure to replace it with yours.
+
+The function app code is basic, it just sends a `message` you set up in query field. 
+```
+import azure.functions as func
+import logging
+from kafka import KafkaProducer
+
+app = func.FunctionApp()
+
+@app.function_name(name="KafkaHttpTrigger")
+@app.route(route="KafkaHttpTrigger", auth_level=func.AuthLevel.FUNCTION)
+def main(req: func.HttpRequest) -> func.HttpResponse:
+    """Receives an HTTP request and sends the 'message' parameter to Apache Kafka."""
+
+    message = req.params.get('message')
+
+    if not message:
+        return func.HttpResponse("Please provide a message in the query string", status_code=400)
+
+    # Kafka Producer
+    try:
+        producer = KafkaProducer(
+            bootstrap_servers='20.52.20.54:9092',  # vm public ip
+            value_serializer=lambda v: str(v).encode('utf-8')  
+        )
+
+        # Send message
+        producer.send('test-topic', value=message)
+        producer.flush()
+        logging.info(f"Message sent to Kafka topic: {message}")
+
+        return func.HttpResponse(f"Message '{message}' sent to Kafka!", status_code=200)
+
+    except Exception as e:
+        logging.error(f"Failed to send message: {str(e)}")
+        return func.HttpResponse(f"Error: {str(e)}", status_code=500)
+```
+
+Before running this function, install kafka  in your venv:
+```
+ pip install kafka-python
+```
+
+Run the function app with `func start` and type this url in your browser:
+```
+http://localhost:7071/api/KafkaHttpTrigger?message=test
+```
+
+Now the message `test` will be sent to kafka and you can read it with the implicit consumer by using this command:
+```
+sudo bin/kafka-console-consumer.sh --topic test-topic --from-beginning --bootstrap-server 20.52.20.54:9092
+```
