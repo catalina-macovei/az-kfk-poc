@@ -88,7 +88,7 @@ You can find in Azure Marketplace this resource:
 ![apache kafka](imgs/image7.png)
 
 After selecting `create button` you will be redirected to a normal VM setup portal which implicitly has the image of Apache Kafka on Ubuntu preselected.
-![create vm](img/image8.png)
+![create vm](imgs/image8.png)
 
 ### Configurations:
 Since this VM is for learning purpose and it doesn't involve a real scenario, I left as default the networking setup. Also Size setup is set to the lowest possible parameter in order to save on budget.
@@ -205,12 +205,21 @@ Before running this function, install kafka  in your venv:
  pip install kafka-python
 ```
 
-Run the function app with `func start` and type this url in your browser:
+Run the function app with `func start`:
+It will display some logs
+![function logs](<imgs/image11.png>) 
+
+Then type this url in your browser:
 ```
 http://localhost:7071/api/KafkaHttpTrigger?message=test
 ```
+It looks like this:
+![browser req](<imgs/image10.png>)
 
 Now the message `test` will be sent to kafka and you can read it with the implicit consumer by using this command:
 ```
 sudo bin/kafka-console-consumer.sh --topic test-topic --from-beginning --bootstrap-server 20.52.20.54:9092
 ```
+![consumer output](<imgs/image9.png>)
+
+
